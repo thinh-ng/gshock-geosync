@@ -65,7 +65,7 @@ object WatchSync {
     suspend fun sync(context: Context): Boolean {
         val location = target(context) ?: return true
         val port = TidePorts.byId(context, targetPortId(context))
-        val device = WatchLink.findWatch(context) ?: return false.also { Log.w(TAG, "no watch") }
+        val device = WatchLink.findWatch(context) ?: return false.also { Log.w(TAG, "watch not connected to G-SHOCK MOVE, retrying later") }
         val ok = WatchLink.use(context, device) { link ->
             val locationOk = syncLocation(link, location.latitude, location.longitude)
             val tideOk = if (port == null) releasePort(link) else syncTide(link, port)

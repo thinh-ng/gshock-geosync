@@ -26,8 +26,13 @@ Location comes from Android's fused provider at balanced power (Wi-Fi and cell, 
 ## Requirements
 
 - Android 13 or later.
-- A Casio GBX-100 paired with the **G-SHOCK MOVE** app. The tide station table is read from that app's
-  installed APK; this repo does not include Casio's data. Without G-SHOCK MOVE, tide is left alone.
+- A Casio GBX-100 paired with the **G-SHOCK MOVE** app, which must keep the watch connected. This app syncs
+  over that connection; while the watch is not connected, syncs wait for the next reconnect (retried every
+  15 minutes). Connecting on its own failed on the test phone: Android routes the connection through the
+  watch's bonded record, whose address type differs from the one that connects.
+- The tide station table is read from G-SHOCK MOVE's installed APK, found by file name, and a private copy
+  is kept on the phone, so a later Casio update or uninstall does not remove tides. This repo does not
+  include Casio's data.
 - Tested on a GBX-100 only. Other models that use G-SHOCK MOVE may differ.
 
 ## Install

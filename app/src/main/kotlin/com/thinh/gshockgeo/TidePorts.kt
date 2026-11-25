@@ -3,6 +3,7 @@ package com.thinh.gshockgeo
 import android.content.Context
 import android.location.Location
 import android.util.Log
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.TimeZone
@@ -53,34 +54,52 @@ class TidePort(
 
 /**
  * Casio's station table is Casio's data, so it is not shipped here: it is read from the G-SHOCK MOVE
- * app installed on the same phone, which the watch needs anyway.
+ * app installed on the same phone, and a private copy is kept so a Casio update or uninstall does not
+ * take tides away.
  */
 object TidePorts {
+    private const val TAG = "GShockGeo"
     private const val CASIO_APP = "com.casio.gshockmove"
-    private const val TABLE = "assets/flutter_assets/packages/casio_watch_lib/assets/tide_csv/move/port_60_component_tide.txt"
+    // Matched by name anywhere in the APK, so a reshuffle of Casio's asset folders does not break it.
+    private const val TABLE_NAME = "port_60_component_tide.txt"
+    private const val COPY_NAME = "tide_table.csv"
 
     @Volatile
     private var cache: List<TidePort>? = null
 
-    /** Empty when G-SHOCK MOVE is missing; then tide is left alone. Not cached, so a later install is picked up. */
-    fun all(context: Context): List<TidePort> =
-        cache ?: runCatching { load(context) }
-            .onFailure { Log.w("GShockGeo", "no tide table from $CASIO_APP: $it") }
-            .getOrDefault(emptyList())
-            .also { if (it.isNotEmpty()) cache = it }
+    /** Empty when neither Casio's app nor the private copy has a usable table; then tide is left alone. */
+    fun all(context: Context): List<TidePort> {
+        cache?.let { return it }
+        val ports = fromCasioApp(context) ?: fromCopy(context) ?: emptyList()
+        if (ports.isNotEmpty()) cache = ports
+        return ports
+    }
 
     fun byId(context: Context, id: Int): TidePort? = all(context).firstOrNull { it.id == id }
 
     fun nearest(context: Context, lat: Double, lon: Double): Pair<TidePort, Float>? =
         all(context).map { it to it.distanceMeters(lat, lon) }.minByOrNull { it.second }
 
-    private fun load(context: Context): List<TidePort> {
+    /** Reads the table from Casio's APK and refreshes the private copy, when the table still parses. */
+    private fun fromCasioApp(context: Context): List<TidePort>? = runCatching {
         val apk = context.packageManager.getApplicationInfo(CASIO_APP, 0).sourceDir
-        return ZipFile(apk).use { zip ->
-            val entry = zip.getEntry(TABLE) ?: error("table not found in $apk")
-            zip.getInputStream(entry).bufferedReader(Charsets.UTF_8).useLines(::parse)
+        val bytes = ZipFile(apk).use { zip ->
+            val entry = zip.entries().asSequence().firstOrNull { it.name.endsWith("/$TABLE_NAME") }
+                ?: error("no $TABLE_NAME in $apk")
+            zip.getInputStream(entry).readBytes()
         }
+        parse(bytes).takeIf { it.isNotEmpty() }?.also { File(context.filesDir, COPY_NAME).writeBytes(bytes) }
+    }.onFailure { Log.w(TAG, "tide table from $CASIO_APP: $it") }.getOrNull()
+
+    private fun fromCopy(context: Context): List<TidePort>? {
+        val copy = File(context.filesDir, COPY_NAME)
+        if (!copy.exists()) return null
+        Log.i(TAG, "using saved tide table")
+        return runCatching { parse(copy.readBytes()) }.getOrNull()?.takeIf { it.isNotEmpty() }
     }
+
+    private fun parse(bytes: ByteArray): List<TidePort> =
+        bytes.inputStream().bufferedReader(Charsets.UTF_8).useLines(::parse)
 
     private fun parse(lines: Sequence<String>): List<TidePort> =
         lines.drop(1).mapNotNull { line ->

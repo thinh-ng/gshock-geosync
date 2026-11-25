@@ -116,15 +116,15 @@ class WatchLink private constructor(private val gatt: BluetoothGatt) {
     }
 
     companion object {
-        /** Prefers the device object of the live link: the bonded record can carry another address type and never connect. */
-        fun findWatch(context: Context): BluetoothDevice? {
-            val manager = context.getSystemService(BluetoothManager::class.java)
-            val isCasio = { d: BluetoothDevice -> d.name?.startsWith("CASIO") == true }
-            return manager.getConnectedDevices(BluetoothProfile.GATT).firstOrNull(isCasio)
-                ?: manager.adapter.bondedDevices.firstOrNull(isCasio)
-        }
+        /**
+         * The watch, through the link G-SHOCK MOVE holds. Null without that link: on tested phones a
+         * connection from this app goes through the bonded record, whose address type never connects.
+         */
+        fun findWatch(context: Context): BluetoothDevice? =
+            context.getSystemService(BluetoothManager::class.java).getConnectedDevices(BluetoothProfile.GATT)
+                .firstOrNull { it.name?.startsWith("CASIO") == true }
 
-        /** Connects, runs [block], and always closes the session. */
+        /** Connects over the live link, runs [block], and always closes the session. */
         suspend fun <T> use(context: Context, device: BluetoothDevice, block: suspend (WatchLink) -> T): T {
             val connected = CompletableDeferred<Unit>()
             var holder: WatchLink? = null
