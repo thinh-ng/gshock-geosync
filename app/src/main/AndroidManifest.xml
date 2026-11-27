@@ -16,14 +16,12 @@
         android:allowBackup="false"
         android:label="@string/app_name">
 
+        <!-- No launcher entry. Started once over adb to ask for permissions. -->
         <activity
             android:name=".MainActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <receiver
             android:name=".SyncReceiver"
