@@ -13,6 +13,8 @@ import kotlinx.coroutines.launch
  *   am broadcast -n com.thinh.gshockgeo/.DebugReceiver --es cmd raw --es hex "'2e 02'"
  *   am broadcast -n com.thinh.gshockgeo/.DebugReceiver --es cmd tide --ei id 2504
  *   am broadcast -n com.thinh.gshockgeo/.DebugReceiver --es cmd sun --ed lat 21.03 --ed lon 105.85
+ *   am broadcast -n com.thinh.gshockgeo/.DebugReceiver --es cmd city --ed lat 21.03 --ed lon 105.85
+ *   am broadcast -n com.thinh.gshockgeo/.DebugReceiver --es cmd custom --es name TEST --ed lat 21.0 --ed lon 105.9 --ei port 2503
  *   am broadcast -n com.thinh.gshockgeo/.DebugReceiver --es cmd sync
  */
 class DebugReceiver : BroadcastReceiver() {
@@ -38,6 +40,21 @@ class DebugReceiver : BroadcastReceiver() {
                 val (rise, set) = SunTimes.minutes(lat, lon) ?: return
                 val local = { m: Double -> "%02d:%02d".format(((m + 420) / 60).toInt() % 24, ((m + 420) % 60).toInt()) }
                 Log.i(TAG, "sun at $lat,$lon: rise ${local(rise)} set ${local(set)} (UTC+7)")
+            }
+            "city" -> {
+                val lat = intent.getDoubleExtra("lat", 0.0)
+                val lon = intent.getDoubleExtra("lon", 0.0)
+                Log.i(TAG, "city at $lat,$lon: ${CityName.lookup(context, lat, lon)}")
+            }
+            "custom" -> {
+                val lat = intent.getDoubleExtra("lat", 0.0)
+                val lon = intent.getDoubleExtra("lon", 0.0)
+                val name = intent.getStringExtra("name") ?: "TEST"
+                val id = intent.getIntExtra("id", 9001)
+                val base = intent.getIntExtra("port", 0)
+                val station = TidePorts.byId(context, base)?.relocated(id, name, lat, lon) ?: TidePort.flat(id, name, lat, lon)
+                val device = WatchLink.findWatch(context) ?: return Unit.also { Log.e(TAG, "no watch") }
+                WatchLink.use(context, device) { link -> Log.i(TAG, "custom upload ok=${TideTransfer.upload(link, station)}") }
             }
             "tide" -> {
                 // Through the job: an upload outlasts what a broadcast may run.

@@ -47,8 +47,16 @@ class TidePort(
         return buf.array()
     }
 
+    /** This station's tide under another id, name and position; the watch takes sunrise/sunset from the position. */
+    fun relocated(id: Int, name: String, lat: Double, lon: Double) =
+        TidePort(id, name, lat, -lon, lon, z0, graphPattern, amplitudes, phases, hcT)
+
     companion object {
         private const val LIST_NO: Byte = 2
+
+        /** A point with no tide, for inland locations. */
+        fun flat(id: Int, name: String, lat: Double, lon: Double) =
+            TidePort(id, name, lat, -lon, lon, 0.0, 0, emptyList(), emptyList(), 0)
     }
 }
 

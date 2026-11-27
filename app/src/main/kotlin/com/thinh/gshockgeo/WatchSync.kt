@@ -8,7 +8,9 @@ import android.util.Log
 private const val TAG = "GShockGeo"
 
 /**
- * Decides what the watch should hold (location for sunrise/sunset, tide port) and makes the watch match.
+ * Decides what the watch should hold and makes the watch match. The watch always gets a station of our
+ * own: named after the city, at the phone's location (the watch takes sunrise/sunset from it), with the
+ * nearest tide station's tide, or no tide inland.
  * The sync reads the watch first and writes only what differs, so it also repairs the watch after
  * G-SHOCK MOVE rewrites it on reconnect.
  */
@@ -18,10 +20,10 @@ object WatchSync {
     private const val MIN_SUN_SHIFT_MINUTES = 2.0
     // Stations are sparse: some beach towns' nearest station is 80 km up the coast.
     private const val PORT_RADIUS_METERS = 100_000f
-    // Selecting a port moves sunrise/sunset to the port. 80 km along a north-south coast costs
-    // 1-2 min (accepted); 90 km inland east-west costs over 3 min (rejected).
-    private const val PORT_MAX_SUN_SHIFT_MINUTES = 3.0
     private const val NO_PORT = 0
+    // Casio's station ids run 864-3364; ours sit above them.
+    private const val FIRST_OWN_ID = 4000
+    private const val OWN_IDS = 60_000
 
     fun target(context: Context): Location? = context.prefs().readLocation("target")
     fun targetPortId(context: Context): Int = context.prefs().getInt("target_port", 0)
@@ -49,26 +51,34 @@ object WatchSync {
     /** Debug builds: forces a port so an upload can be tested without travelling. */
     fun setTargetPort(context: Context, id: Int) = context.prefs().edit().putInt("target_port", id).apply()
 
-    /**
-     * With an uploaded port selected, the watch takes sunrise/sunset from the port's coordinates, so a
-     * port is used only when that stays close to the truth. Otherwise the watch goes back to its
-     * built-in tide mode and sunrise/sunset follows the real location.
-     */
     private fun choosePort(context: Context, here: Location): Int {
         val (nearest, distance) = TidePorts.nearest(context, here.latitude, here.longitude) ?: return NO_PORT
-        if (distance > PORT_RADIUS_METERS) return NO_PORT
-        val shift = SunTimes.shiftMinutes(here.latitude, here.longitude, nearest.latitude, nearest.longitude)
-        return if (shift < PORT_MAX_SUN_SHIFT_MINUTES) nearest.id else NO_PORT
+        return if (distance <= PORT_RADIUS_METERS) nearest.id else NO_PORT
+    }
+
+    /**
+     * The station the watch should hold. Its id is derived from the record, so a changed city, position
+     * or tide shows up as a different id in the watch's tide settings and triggers a new upload.
+     */
+    fun station(context: Context): TidePort? {
+        val location = target(context) ?: return null
+        val name = CityName.lookup(context, location.latitude, location.longitude) ?: "HOME"
+        val port = TidePorts.byId(context, targetPortId(context))
+        val draft = port?.relocated(0, name, location.latitude, location.longitude)
+            ?: TidePort.flat(0, name, location.latitude, location.longitude)
+        val id = FIRST_OWN_ID + Math.floorMod(draft.record().contentHashCode(), OWN_IDS)
+        return port?.relocated(id, name, location.latitude, location.longitude)
+            ?: TidePort.flat(id, name, location.latitude, location.longitude)
     }
 
     /** Brings the watch in line with the targets. Returns false when something must be retried. */
     suspend fun sync(context: Context): Boolean {
         val location = target(context) ?: return true
-        val port = TidePorts.byId(context, targetPortId(context))
+        val station = station(context) ?: return true
         val device = WatchLink.findWatch(context) ?: return false.also { Log.w(TAG, "watch not connected to G-SHOCK MOVE, retrying later") }
         val ok = WatchLink.use(context, device) { link ->
             val locationOk = syncLocation(link, location.latitude, location.longitude)
-            val tideOk = if (port == null) releasePort(link) else syncTide(link, port)
+            val tideOk = syncTide(link, station)
             locationOk && tideOk
         }
         if (ok) context.prefs().edit().putLong("synced_at", System.currentTimeMillis()).apply()
@@ -91,20 +101,10 @@ object WatchSync {
         return matches(stored, lat, lon)
     }
 
-    /** Inland: switch an uploaded port back to the watch's built-in tide mode (`2e 02 01 ...`). */
-    private suspend fun releasePort(link: WatchLink): Boolean {
-        val settings = link.read(byteArrayOf(WatchProtocol.CLASS_TIDE, WatchProtocol.TIDE_SETTINGS_UNIT)) ?: return false
-        if (settings.size < 3 || settings[2] != WatchProtocol.TIDE_SOURCE_APP_PORT) return true
-        Log.i(TAG, "inland, back to built-in tide mode")
-        link.write(settings.copyOf().also { it[2] = WatchProtocol.TIDE_SOURCE_BUILT_IN })
-        val after = link.read(byteArrayOf(WatchProtocol.CLASS_TIDE, WatchProtocol.TIDE_SETTINGS_UNIT))
-        return after != null && after.size >= 3 && after[2] == WatchProtocol.TIDE_SOURCE_BUILT_IN
-    }
-
     private suspend fun syncTide(link: WatchLink, port: TidePort): Boolean {
         val settings = link.read(byteArrayOf(WatchProtocol.CLASS_TIDE, WatchProtocol.TIDE_SETTINGS_UNIT))
         if (settings != null && TideTransfer.isSelected(settings, port.id)) return true
-        Log.i(TAG, "uploading tide port ${port.name}")
+        Log.i(TAG, "uploading station ${port.name} (${port.id})")
         return TideTransfer.upload(link, port)
     }
 
