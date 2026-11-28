@@ -12,8 +12,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "GShockGeo"
 
@@ -23,7 +23,7 @@ class SyncJob : JobService() {
     private var work: Job? = null
 
     override fun onStartJob(params: JobParameters): Boolean {
-        running.set(true)
+        synchronized(lock) { running = true }
         work = scope.launch {
             val ok = try {
                 WatchSync.sync(this@SyncJob)
@@ -34,40 +34,54 @@ class SyncJob : JobService() {
                 false
             }
             Log.i(TAG, if (ok) "sync done" else "sync incomplete, retrying later")
-            running.set(false)
             jobFinished(params, !ok)
-            if (ok && rerun.getAndSet(false)) schedule(this@SyncJob)
+            // A failed sync is retried by the backoff, which also covers any request queued meanwhile.
+            val again = synchronized(lock) {
+                running = false
+                val queued = rerun
+                rerun = false
+                queued && ok
+            }
+            if (again) schedule(this@SyncJob)
         }
         return true
     }
 
     override fun onStopJob(params: JobParameters): Boolean {
-        running.set(false)
+        synchronized(lock) { running = false }
         work?.cancel()
         return true
+    }
+
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
     }
 
     companion object {
         private const val JOB_ID = 1
         private const val RETRY_MILLIS = 15 * 60_000L
-        private val running = AtomicBoolean(false)
-        private val rerun = AtomicBoolean(false)
+        private val lock = Any()
+        private var running = false
+        private var rerun = false
 
         /**
          * Scheduling under a running job's id would stop it mid-upload, so a request that arrives
          * during a sync is queued until that sync finishes.
          */
         fun schedule(context: Context, delayMillis: Long = 0) {
-            if (running.get()) {
-                rerun.set(true)
-                return
+            synchronized(lock) {
+                if (running) {
+                    rerun = true
+                    return
+                }
+                val job = JobInfo.Builder(JOB_ID, ComponentName(context, SyncJob::class.java))
+                    .setMinimumLatency(delayMillis)
+                    .setBackoffCriteria(RETRY_MILLIS, JobInfo.BACKOFF_POLICY_LINEAR)
+                    .setPersisted(true)
+                    .build()
+                context.getSystemService(JobScheduler::class.java).schedule(job)
             }
-            val job = JobInfo.Builder(JOB_ID, ComponentName(context, SyncJob::class.java))
-                .setMinimumLatency(delayMillis)
-                .setBackoffCriteria(RETRY_MILLIS, JobInfo.BACKOFF_POLICY_LINEAR)
-                .setPersisted(true)
-                .build()
-            context.getSystemService(JobScheduler::class.java).schedule(job)
         }
     }
 }

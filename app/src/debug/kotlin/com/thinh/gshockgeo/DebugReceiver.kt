@@ -7,6 +7,7 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 /**
  * Debug builds only. Test hooks driven over adb:
@@ -22,7 +23,8 @@ class DebugReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                run(context, intent)
+                // A background broadcast is killed as an ANR at 60 s; a BLE session can wait longer.
+                withTimeout(50_000) { run(context, intent) }
             } catch (e: Exception) {
                 Log.e(TAG, "debug command failed", e)
             } finally {

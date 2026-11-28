@@ -44,9 +44,12 @@ Location comes from Android's fused provider at balanced power (Wi-Fi and cell, 
 ## Install
 
 ```
-./gradlew assembleDebug
-adb install app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleRelease
+adb install -r app/build/outputs/apk/release/app-release.apk
 ```
+
+The release build is signed with the debug key, so it installs over a debug build and keeps its
+permissions. Use `assembleDebug` only for the `DebugReceiver` test hooks.
 
 The app has no launcher entry and no screen. Start its setup once after the first install, and allow location
 **all the time** and nearby devices:

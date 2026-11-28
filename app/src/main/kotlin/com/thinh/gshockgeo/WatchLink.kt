@@ -127,7 +127,9 @@ class WatchLink private constructor(private val gatt: BluetoothGatt) {
         /** Connects over the live link, runs [block], and always closes the session. */
         suspend fun <T> use(context: Context, device: BluetoothDevice, block: suspend (WatchLink) -> T): T {
             val connected = CompletableDeferred<Unit>()
+            val lock = Any()
             var holder: WatchLink? = null
+            var earlyLoss: Int? = null
             val callback = object : BluetoothGattCallback() {
                 override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
                     Log.i(TAG, "connection state=$newState status=$status")
@@ -135,7 +137,8 @@ class WatchLink private constructor(private val gatt: BluetoothGatt) {
                         connected.complete(Unit)
                     } else {
                         connected.completeExceptionally(IllegalStateException("could not connect, status $status"))
-                        holder?.onLost(status)
+                        // The link can drop before connectGatt has returned and holder is set.
+                        synchronized(lock) { holder?.onLost(status) ?: run { earlyLoss = status } }
                     }
                 }
 
@@ -158,7 +161,10 @@ class WatchLink private constructor(private val gatt: BluetoothGatt) {
             }
             val gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
             val link = WatchLink(gatt)
-            holder = link
+            synchronized(lock) {
+                holder = link
+                earlyLoss?.let(link::onLost)
+            }
             try {
                 withTimeout(30_000) { connected.await() }
                 link.discover()

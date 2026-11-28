@@ -14,6 +14,13 @@ android {
         versionCode = 1
         versionName = "0.1"
     }
+
+    buildTypes {
+        // Sideloaded only. The debug key lets a release build install over a debug one and keep its permissions.
+        release {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
 }
 
 dependencies {
